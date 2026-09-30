@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------------------
+# Files Git must never upload to GitHub
+# ---------------------------------------------------------------------------
+
+# Secrets: API keys for Groq, Serper, Anthropic (copy .env.example to .env on a new computer)
+.env
+
+# Everything the modules produce: results, the database (over GitHub's 100 MB limit), Chrome profile, logs.
+# All of it can be rebuilt by running the modules again.
+output/
+
+# Private conversations with the client (not needed by the code)
+fiverr chat.txt
+meeting.txt
+
+# Python's automatic cache files and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Temporary files Excel / Word create while a file is open
+~$*
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,492 @@
+# ---------------------------------------------------------------------------
+# Faculty Emails Extractor - configuration
+# Paths are relative to the project folder.
+# ---------------------------------------------------------------------------
+
+paths:
+  input_file: "CTEP Freelance Project Institutions File.xlsx"
+  input_sheet: null                 # null = first sheet
+  db_file: "output/cache.sqlite"    # page cache + results of every module (delete to start from scratch)
+  log_dir: "output/logs"
+  m1_output: "output/01_websites.xlsx"
+  m2_output: "output/02_programs.xlsx"
+  m3_output: "output/03_final.xlsx"
+
+output:
+  email_separator: "; "
+  trailing_separator: true          # "a@x.edu; b@x.edu;" - client asked for a semicolon after each email
+  degree_separator: "; "
+
+browser:
+  headless: false                   # keep false: a visible Chrome gets far fewer CAPTCHAs
+  profile_dir: "output/chrome_profile"
+  chrome_version_main: null         # e.g. 129 if undetected-chromedriver downloads the wrong driver version
+  chrome_binary: null               # full path to chrome.exe if Chrome is not in the default location
+  page_load_timeout: 45
+  render_wait_seconds: 3
+  max_load_more_clicks: 30
+  max_scrolls: 15
+  # Bot checks on websites (Cloudflare "Verify you are human", reCAPTCHA, hCaptcha):
+  challenge_solve_seconds: 45       # time to get past one: wait, then click the checkbox (re-clicked every ~12 s)
+  challenge_mouse_click: true       # Cloudflare: click the checkbox with the real mouse (the cursor moves for ~1 s)
+  challenge_retries: 1              # not passed -> close Chrome, wait, open the same URL again (this many times)
+  challenge_cooldown_minutes: [2, 4]  # random wait before trying again
+  # still blocked after that -> the site is skipped for the rest of the run, with a note in the output
+
+search:
+  backend: auto                     # auto = Serper API when SERPER_API_KEY is set, otherwise Chrome; or: serper / chrome
+  serper_api_keys: []               # better in .env: SERPER_API_KEYS=key1,key2,... (used one by one; next key when one runs out)
+  chrome_fallback: true             # if the API fails (no credits, outage), search in Chrome instead
+  gl: us
+  hl: en
+  num: 10                           # results per search (10 = 1 credit)
+  timeout: 30
+
+google:                             # Chrome searches only
+  home_url: "https://www.google.com/?hl=en&gl=us"
+  search_url: "https://www.google.com/search?hl=en&gl=us&q="
+  min_delay_seconds: 8
+  max_delay_seconds: 20
+  long_break_every: 25              # take a longer pause after this many searches
+  long_break_seconds: [60, 120]
+  captcha_wait_seconds: 900         # how long to wait for you to solve a CAPTCHA in the Chrome window
+  auto_click_captcha: true          # click the "I'm not a robot" checkbox automatically; beep only if an image challenge appears
+
+fetch:
+  timeout: 25
+  connect_timeout: 10
+  per_host_delay: 1.0               # seconds between two requests to the same website
+  retries: 1
+  max_bytes: 15000000
+  browser_fallback: true            # open the page in Chrome when plain HTTP is blocked or needs JavaScript
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+
+scorecard:
+  enabled: true
+  api_key: ""                       # or SCORECARD_API_KEY in .env (free: https://api.data.gov/signup/)
+  ipeds_hd_csv: null                # alternative without a key: IPEDS "HD" directory CSV (UNITID, WEBADDR columns)
+
+# ---------------------------------------------------------------------------
+# Module 1 - official website
+# ---------------------------------------------------------------------------
+m1:
+  query_template: '"{name}" {city} {state} official website'
+  top_results: 5
+  other_links_max: 8                # distinct sites taken from AI Overview / other links on the results page
+  title_match_threshold: 85         # institution name vs Google result title (fuzzy, 0-100)
+  high_threshold: 75                # e.g. top result + .edu + name in title + domain looks like the name
+  medium_threshold: 45
+  ambiguity_margin: 10              # runner-up this close to the winner -> at most Medium
+  weights:
+    knowledge_panel: 40
+    edu: 25
+    scorecard: 30
+    scorecard_partial: 15
+    domain_name_match: 15
+    title_match: 25
+    rank1: 10
+    third_party: -100
+    campus_mismatch: -30
+  generic_subdomains: [admissions, admission, apply, catalog, catalogs, catalogue, bulletin, news, library, lib,
+                       libguides, my, portal, online, give, giving, alumni, athletics, go, info, visit, events,
+                       calendar, directory, web, www2, ww2, home, students, sites, blogs, blog, today, magazine,
+                       careers, jobs, hr, it, help, support, shop, store, bookstore, en, m, mobile]
+  third_party_domains: [wikipedia.org, usnews.com, niche.com, collegeboard.org, petersons.com, cappex.com,
+                        collegeraptor.com, unigo.com, princetonreview.com, forbes.com, collegesimply.com,
+                        collegevine.com, facebook.com, instagram.com, linkedin.com, twitter.com, x.com, youtube.com,
+                        tiktok.com, yelp.com, mapquest.com, indeed.com, glassdoor.com, ed.gov, collegetuitioncompare.com,
+                        univstats.com, collegefactual.com, universityhq.org, bestcolleges.com, thebestschools.org,
+                        collegedata.com, zippia.com, britannica.com, crunchbase.com, bloomberg.com, reddit.com,
+                        quora.com, google.com, bing.com, yahoo.com, collegeconfidential.com, topuniversities.com,
+                        timeshighereducation.com, 4icu.org, gradreports.com, payscale.com, schooldigger.com,
+                        stateuniversity.com, usnews.org, collegeaffordabilityguide.org, onlineu.com]
+
+# ---------------------------------------------------------------------------
+# Module 2 - undergraduate programs page
+# ---------------------------------------------------------------------------
+m2:
+  workers: 4
+  second_hop_top_n: 3
+  second_hop_penalty: -5
+  validate_top_n: 6
+  use_sitemap: true
+  sitemap_max_files: 8
+  sitemap_max_urls: 30000
+  sitemap_top_n: 5
+  catalog_subdomains: [catalog, catalogue, bulletin]
+  catalog_base_score: 15
+  catalog_link_bonus: 5
+  catalog_vendor_domains: [smartcatalogiq.com, acalogadmin.com, coursedog.com, courseleaf.com]
+  # Step 1 - Google ({site} = campus host like d.umn.edu, or the whole domain). The 2nd query runs only if the 1st is not High.
+  google_queries:
+    - 'site:{site} undergraduate majors programs'
+    - 'site:{site} "majors" OR "programs of study" OR "areas of study" bachelor'
+  google_top_results: 6
+  google_validate_top_n: 3          # results opened and checked for degree listings
+  google_min_score: 10              # floor for a result whose title has no keyword
+  google_rank_bonus: [15, 10, 6, 3] # points for Google rank 1, 2, 3, 4
+  google_render_top_n: 2            # open Google's top N results in Chrome if the plain HTML lists no degrees (JS finders)
+  # Step 2 - academics page (only if still not High): Column D fallback + a hub whose links are checked
+  academics_query: 'site:{site} academics'
+  academics_keywords:
+    "academics": 30
+    "academic programs": 30
+    "academic departments": 25
+    "schools and colleges": 25
+    "colleges and schools": 25
+    "departments": 15
+    "graduate": -30
+    "online": -15
+    "news": -40
+    "event": -40
+    "events": -40
+    "calendar": -30
+    "athletics": -40
+    "policy": -20
+    "policies": -20
+    "integrity": -30
+    "catalog": -10
+  # Step 3 - crawl (homepage menus, catalog sub-site, sitemap) only if still not High. --google-only skips it.
+  catalog_tie_margin: 10
+  host_penalties: {online: -40, distance: -30, elearning: -30}   # sub-site words: onlinedegrees.x.edu lists online programs only
+  dept_path_penalty: -15            # /school-of-.../ or /...-department/: one department's page, not the full list            # prefer the website's own majors page over a catalog page within this many points
+  render_if_markers_below: 5
+  high_threshold: 80
+  medium_threshold: 50
+  agreement_bonus: 15
+  marker_bonus: [[15, 30], [5, 20], [1, 5], [0, -20]]    # [min "Bachelor/B.S./Major" mentions, points]
+  target_bonus: [[5, 25], [3, 15], [1, 5], [0, -10]]     # [min distinct target majors linked, points]
+  url_factor: 0.5
+  # Scored on link text (full weight) and URL path (x url_factor). Best positive + all negatives.
+  link_keywords:
+    "undergraduate programs": 40
+    "undergraduate majors": 40
+    "undergraduate degrees": 40
+    "majors and minors": 35
+    "majors minors": 35
+    "programs of study": 35
+    "areas of study": 30
+    "fields of study": 30
+    "academic programs": 30
+    "degree programs": 30
+    "degrees and programs": 30
+    "programs and degrees": 30
+    "find your program": 30
+    "find your major": 30
+    "explore programs": 25
+    "explore majors": 25
+    "all programs": 25
+    "programs a z": 25
+    "majors": 25
+    "undergraduate": 15
+    "programs": 10
+    "degrees": 10
+    "academics": 8
+    "graduate": -30
+    "online": -20
+    "continuing": -30
+    "adult": -20
+    "professional studies": -15
+    "certificate": -15
+    "news": -40
+    "event": -40
+    "events": -40
+    "blog": -40
+    "story": -30
+    "admission requirements": -20
+    "apply": -15
+    "tuition": -20
+    "financial aid": -30
+    "faculty": -10
+    "courses": -10
+
+# ---------------------------------------------------------------------------
+# Module 3 - degrees, faculty pages, contacts
+# ---------------------------------------------------------------------------
+m3:
+  workers: 4
+  max_listing_pages: 15             # pagination pages followed on the programs page
+  render_if_programs_below: 3       # render the programs page in Chrome if fewer candidates are found
+  max_ambiguous_for_llm: 80
+  llm_text_fallback_below: 2        # AI reads the page text if rules found fewer majors than this
+  llm_text_max_chars: 24000         # page text sent to the AI when rules find too few majors
+  llm_text_max_links: 200
+  max_programs_for_contacts: 60
+  max_requests_per_institution: 300
+  max_directory_pages: 10
+  max_profiles_per_directory: 10
+  render_if_no_emails: true
+  faculty_link_threshold: 20
+  max_faculty_page_tries: 5        # faculty-page sources tried per major until one gives a useful email
+  wide_page_emails: 60              # a "faculty page" with more emails is a campus directory: keep only people naming the dept
+  faculty_url_reject: ["/news", "/blog", "/article", "/story", "/stories", "/event", "/calendar", "/magazine",
+                       "/press", "/podcast", "/alumni", "/jobs", "/careers", "/employment", "/postings",
+                       "/human-resources", "/hr/"]   # never used as faculty pages
+  faculty_host_reject: ["athletics.", "gosports.", "alumni.", "news.", "give.", "giving.", "shop.", "store."]
+  # never selected (Column F): admissions, graduate-program, study-abroad and registrar staff
+  exclude_title_patterns: ['\benroll', '\badmission', '\brecruit', '\bgraduate\s+(program\s+)?(coordinator|director|admissions?|studies)',
+                           '\b(study|education)\s+abroad', '\bfinancial\s+aid', '\bregistrar', '\bbursar', '\balumni',
+                           '\badvancement', '\bstudent\s+accounts', '\btech(nology)?\s+support\b', '\bhelp\s*desk\b',
+                           '\bdean\s+of\s+(men|women|students|student\s+life)\b', '\bhousing\b', '\bresidence\s+life\b']
+  # links under these paths are never majors (student-life pages linked from the programs page)
+  program_url_reject: ["/student-life", "/campus-life", "/athletics", "/news", "/events"]
+  dept_link_threshold: 25
+  llm_max_links: 120                # links offered to the AI when picking a faculty page
+  google_per_institution_api: 30       # Google searches per institution for department faculty pages (Serper API)
+  google_fallback_per_institution: 2   # same, when searching through Chrome
+  google_query: 'site:{site} "{program}" faculty'
+  fallback_professors_per_program: 3   # when no chair/director/dean/coordinator is found
+  max_office_emails_per_program: 2
+  max_emails_per_institution: 0        # 0 = no limit
+  office_fallback_below: 2             # look for research/advising/career offices if fewer emails were selected
+  office_max_pages: 4
+  office_link_threshold: 25
+  min_emails_for_extra_domain: 3       # accept a different .edu email domain (e.g. maine.edu) seen this often
+  max_llm_contacts: 150
+  llm_contacts_batch: 25            # email snippets per AI call
+  max_card_chars: 700
+  faculty_link_keywords:
+    "faculty and staff": 40
+    "faculty staff": 40
+    "faculty directory": 40
+    "meet the faculty": 40
+    "meet our faculty": 40
+    "our faculty": 35
+    "faculty": 30
+    "our people": 30
+    "people": 25
+    "directory": 25
+    "our team": 25
+    "meet our team": 25
+    "staff": 15
+    "contact us": 12
+    "contact": 10
+    "resources": -25
+    "handbook": -30
+    "senate": -30
+    "development": -20
+    "jobs": -30
+    "positions": -30
+    "employment": -30
+    "openings": -30
+    "hiring": -30
+    "awards": -20
+    "news": -25
+    "publications": -15
+    "grants": -20
+    "student": -10
+    "login": -40
+    "portal": -30
+  profile_url_keywords: ["/people/", "/person/", "/faculty/", "/directory/", "/profile", "/profiles/", "/staff/",
+                         "/faculty-staff/", "/faculty-and-staff/", "/our-people/", "/bios/",
+                         "/bio", "/team/", "/expert", "/users/"]
+  office_link_keywords:
+    "office of undergraduate research": 45
+    "undergraduate research": 40
+    "academic advising": 35
+    "advising center": 35
+    "career center": 35
+    "career services": 35
+    "career development": 30
+    "undergraduate studies": 35
+    "student success": 20
+
+# ---------------------------------------------------------------------------
+# Which majors count (Module 2 validation + Module 3 Column E)
+# ---------------------------------------------------------------------------
+majors:
+  # Auto-included when a program name contains one of these (whole words).
+  target_keywords:
+    # life sciences
+    - biology
+    - biological science
+    - biological sciences
+    - life science
+    - life sciences
+    - biochemistry
+    - microbiology
+    - molecular biology
+    - cell biology
+    - cellular biology
+    - neurobiology
+    - genetics
+    - ecology
+    - zoology
+    - botany
+    - physiology
+    - biotechnology
+    - bioinformatics
+    - biomedical
+    - biomedical science
+    - biomedical sciences
+    - marine biology
+    - marine science
+    - neuroscience
+    - neurosciences
+    - cognitive science
+    # physical sciences
+    - chemistry
+    - physics
+    - biophysics
+    - astronomy
+    - astrophysics
+    - geology
+    - earth science
+    - environmental science
+    - natural science
+    - natural sciences
+    - physical science
+    - forensic science
+    # formal sciences / computing
+    - statistics
+    - mathematics
+    - applied mathematics
+    - data science
+    - data sciences
+    - data analytics
+    - computer science
+    - computer sciences
+    # engineering
+    - engineering
+    - bioengineering
+    # health
+    - nursing
+    - public health
+    - community health
+    - global health
+    - health science
+    - health sciences
+    - health studies
+    - health policy
+    - exercise
+    - exercise science
+    - exercise physiology
+    - kinesiology
+    - athletic training
+    - nutrition
+    - dietetics
+    - medical laboratory
+    - clinical laboratory
+    - medical technology
+    - radiologic
+    - radiography
+    - sonography
+    - respiratory
+    - nuclear medicine
+    - pharmaceutical
+    - allied health
+    - speech language
+    - audiology
+    - communication sciences
+    - communication disorders
+    # social / applied
+    - psychology
+    - psychological science
+    - communication
+    - communications
+    - political science
+    - sociology
+    - social work
+    - equine science
+    - equine studies
+    - sport management
+  # Names containing these (prefix match) but no target keyword go to the AI, or to the Programs sheet for review.
+  ambiguous_keywords: [science, health, medical, medicine, bio, chem, clinical, therap, wellness, sport,
+                       rehabilitation, environment, sociology, anthropology, behavior, gerontology, social work,
+                       pharmacy, informatics, analytics, computing, technology, cyber, veterinary, agricult, food,
+                       animal, plant, math, human performance, human development, fitness, physical education]
+  # Regex on the lowercase program name. Any match = not a bachelor's major.
+  exclude_patterns:
+    - '\bminors?\b'
+    - '\bcertificat'
+    - '\bassociate\b'
+    - '\bmaster'
+    - '(?<![a-z])m\.\s?s\.?(?![a-z])'
+    - '(?<![a-z])m\.\s?a\.?(?![a-z])'
+    - '\b(ms|ma|mba|mph|msn)\b'
+    - '\bph\.?\s?d\b'
+    - '\bdoctor'
+    - '\b(dnp|dpt|otd|pharm\.?\s?d)\b'
+    - '\bgraduate\b'
+    - '\bpost-?\s?bacc'
+    - '\bpre-?\s?(med|medical|medicine|dental|dentistry|vet|veterinary|pharmacy|physical therapy|occupational therapy|pt|ot|optometry|physician|health|professional|law|nursing|engineering|physician assistant)\b'
+    - '\bcourses?\b'
+    - '\b(club|society|association)\b'
+    - '\bgrades?\s*[pk0-9]+\s*[-–]\s*[0-9]+'   # teacher-certification tracks ("Biology Grades 8-12")
+    - '\bteach(ing|er|ers)?\b'
+    - '\beducation\b'
+    - '\b(aas|asn|adn|a\.a\.s|a\.s\.n|a\.d\.n)\b'   # associate degrees written as abbreviations
+    - '\bgradute\b'                                  # misspelled "graduate" on some program finders
+    - '^\s*(school|college|department|division|institute) of\b'   # a school, not a major
+  # Regex on the lowercase name: navigation / non-program links.
+  noise_patterns:
+    - '^(apply|apply now|visit|visit campus|request info(rmation)?|give|donate|news|events|contact( us)?|login|log in|search|menu|home|faculty|staff|directory|about|about us)$'
+    - '\b(scholarships?|internships?|news|events?|tutoring|outreach|newsletter|calendar|symposium|seminar|lecture series|awards?|alumni|hiring|jobs?|careers? in|summer program|high school|k-12|research lab|facilities|student organizations?|living learning|honors college)\b'
+    - '\b(health services|health center|counseling|wellness center|student health|health insurance|immuni[sz]ation|covid)\b'
+  min_name_length: 3
+  max_name_length: 90
+
+# ---------------------------------------------------------------------------
+# Contact roles (checked in this order; first match wins)
+# ---------------------------------------------------------------------------
+roles:
+  patterns:
+    emeritus: '\bemerit(us|a|i)\b'
+    chair: '\b(chair|chairperson|chairwoman|chairman|department head|head of (the )?department|head,? department of)\b'
+    dean: '\bdean\b'
+    program_director: '\b(director|program head|program lead)\b'
+    coordinator: '\b(coordinator|advis[eo]r)\b'
+    professor: '\b(professor|lecturer|instructor|faculty)\b'
+    staff: '\b(assistant|administrator|manager|specialist|secretary|technician|staff)\b'
+  ignore_phrases: ['endowed chair', 'named chair', 'chair(ed)? professor(ship)?', 'faculty senate', 'board of trustees']
+  staff_phrases: ['(administrative|executive|office|department(al)?) (assistant|associate|manager|specialist|secretary)',
+                  'assistant to the']
+  selection_priority: [chair, program_director, dean, coordinator, office, professor, staff, unknown, emeritus]
+  # An email with no person name whose local part contains one of these is treated as an office mailbox.
+  office_email_keywords: [advis, career, research, undergrad, ugrad, urop, dept, department, office, studies,
+                          program, science, biology, chem, physics, psych, nursing, health, kinesiology, neuro,
+                          engineering, stats, math, comm, success, academic]
+
+emails:
+  # Local parts (before @) that are never used.
+  generic_local_parts: [noreply, no-reply, donotreply, do-not-reply, webmaster, web, website, info, information,
+                        admission, admissions, apply, hr, humanresources, jobs, employment, help, helpdesk,
+                        servicedesk, support, it, ithelp, security, police, publicsafety, titleix, privacy,
+                        accessibility, registrar, bursar, financialaid, finaid, marketing, communications, news,
+                        media, press, alumni, giving, development, foundation, athletics, library, events, webteam, webservices,
+                        bookstore, housing, dining, parking, postmaster, abuse, president, provost, purchasing,
+                        payroll, accounts, billing]
+  generic_local_prefixes: [noreply, no-reply, donotreply, webmaster, admission, alumni, giving, athletic]
+
+# ---------------------------------------------------------------------------
+# AI (Module 3 only)
+# ---------------------------------------------------------------------------
+llm:
+  enabled: true                     # without the provider's key in .env, AI steps are skipped (rules only)
+  provider: groq                    # groq (GROQ_API_KEY, paid Developer account) or anthropic (ANTHROPIC_API_KEY)
+  # Groq, tried in order: gpt-oss-120b does everything; gpt-oss-20b only takes over if 120b hits a rate limit.
+  # Both are production models with strict JSON-schema output (answers always match the expected format).
+  models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+  # How long the model thinks before answering, per task (low / medium / high):
+  reasoning_effort:
+    default: medium                 # judging program names, picking a faculty link
+    extract_programs: high          # reading a whole programs page: most room for mistakes, runs rarely
+    extract_contacts: low           # copying name / title from the text around an email: mechanical, most calls
+  model: "claude-haiku-4-5"         # used when provider = anthropic
+  max_tokens: 8192                  # room for the model's thinking + the JSON answer
+  max_prompt_chars: 60000           # ~15K tokens per request (the paid tier has no 8K tokens-per-minute cap)
+  max_wait_seconds: 90              # wait this long on "too many requests"; longer = daily limit -> next model
+  max_retries: 4
+  timeout: 120
+  price_input_per_mtok: 0.15        # used by `python run.py cost` (gpt-oss-120b on Groq; Claude Haiku 4.5 = 1.0 / 5.0)
+  price_output_per_mtok: 0.60
+  criteria: |
+    The client wants undergraduate bachelor's degree MAJORS in natural sciences (life and physical sciences),
+    health sciences, and social, formal and applied/interdisciplinary sciences. Examples: Biochemistry, Biology,
+    Biomedical Sciences, Chemistry, Communication, Computer Science, Data Science, Engineering (Biomedical,
+    Chemical, Mechanical), Exercise Science, Health Policy, Health Science, Kinesiology, Neuroscience, Nursing,
+    Marine Biology/Science, Molecular Biology, Physics, Psychology, Public Health, Statistics.
+    Also wanted: Political Science, Sociology, Social Work, Equine Science, Sport Management.
+    Health-related programs are the top priority.
+    Not wanted: arts, humanities, business, education, minors, certificates, associate degrees,
+    graduate-only programs, pre-professional tracks, teacher-education tracks.
