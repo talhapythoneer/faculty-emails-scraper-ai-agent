@@ -208,6 +208,8 @@ class Fetcher:
             m = ERROR_PAGE_RE.search(" ".join(text.split())[:300])
             if m and len(text.split()) < 80:
                 status = int(m.group(1)) if m.group(1) else 403
+            elif len(text.split()) < 20:
+                status = 0  # blank page (scripts failed to draw it): not content, and not cached
         return Page(url, final or url, status, html if ok else "", "text/html", "browser")
 
     def _retry_after_challenge(self, browser, url: str, expand: bool, challenge: str):

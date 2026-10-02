@@ -55,6 +55,26 @@ return null;
 """
 
 
+def _close_leftover_chrome(profile_dir: str) -> bool:
+    """Close Chrome processes started with this project's profile (left behind when a run was killed).
+    Only processes whose command line contains the profile folder are touched, never your own Chrome."""
+    try:
+        import psutil
+    except ImportError:
+        return False
+    needle = profile_dir.lower().replace("/", "\\")
+    closed = 0
+    for p in psutil.process_iter(["name", "cmdline"]):
+        try:
+            if (p.info["name"] or "").lower().startswith("chrome") and \
+                    needle in " ".join(p.info["cmdline"] or []).lower().replace("/", "\\"):
+                p.kill()
+                closed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return closed > 0
+
+
 class CaptchaTimeout(RuntimeError):
     """A Google CAPTCHA was not solved within google.captcha_wait_seconds."""
 
@@ -88,7 +108,16 @@ class Browser:
         if self.bcfg.get("chrome_binary"):
             kwargs["browser_executable_path"] = str(self.bcfg["chrome_binary"])
         log.info("Starting Chrome (undetected-chromedriver)...")
-        self.driver = uc.Chrome(**kwargs)
+        try:
+            self.driver = uc.Chrome(**kwargs)
+        except WebDriverException as e:
+            # a Chrome left over from a run that was killed still holds the profile: close it and try once more
+            if not _close_leftover_chrome(str(profile)):
+                raise
+            log.warning("Closed a leftover Chrome that was still using the profile (%s) - starting again.",
+                        str(e).splitlines()[0][:80])
+            time.sleep(2)
+            self.driver = uc.Chrome(**kwargs)
         self.driver.set_page_load_timeout(int(self.bcfg.get("page_load_timeout", 45)))
 
     def close(self) -> None:
@@ -341,6 +370,12 @@ class Browser:
                                             gui_click=bool(self.bcfg.get("challenge_mouse_click", True))):
                         return "", d.current_url or url, False, kind
                     log.info("%s check passed on %s", kind.capitalize(), urlparse(url).hostname)
+                for _ in range(4):  # slow pages (Colby): wait while the page is still nearly empty
+                    words = d.execute_script(
+                        "return document.body ? (document.body.innerText || '').split(/\\s+/).length : 0") or 0
+                    if words >= 20:
+                        break
+                    time.sleep(2)
                 if expand:
                     self._expand()
                 html, final = d.page_source, d.current_url

@@ -29,7 +29,8 @@ log = logging.getLogger("m2")
 MODULE = "m2"
 COLUMNS = ["unitid", "institution", "state", "website_url", "domain", "programs_url", "confidence_score",
            "confidence_level", "method", "page_type", "degree_marker_count", "target_link_count", "rendered",
-           "academics_url", "steps", "top3_candidates", "programs_url_override", "notes"]
+           "academics_url", "steps", "top3_candidates", "programs_url_override", "client_note", "notes"]
+NOTE_MODULE = "m2note"  # the client_note column: a reviewer's note for the client's NOTES column
 OVERRIDE_SHEETS = ("Programs", "Review")
 CATALOG_HOST_PREFIXES = ("catalog.", "catalogs.", "catalogue.", "bulletin.", "bulletins.")
 CATALOG_MARKERS = ("acalog", "courseleaf", "smartcatalog", "coursedog")
@@ -331,12 +332,19 @@ def sync_m2_overrides(db: DB, path) -> None:
     baseline = {uid: d.get("programs_url", "") for uid, d in db.all_results(MODULE).items()}
     sync_overrides(db, MODULE, path, "programs_url_override", OVERRIDE_SHEETS, edited_column="programs_url",
                    baseline=baseline)
+    sync_client_notes(db, path)
+
+
+def sync_client_notes(db: DB, path) -> None:
+    """client_note column -> database (the note goes to the client's NOTES column in Module 3's output)."""
+    sync_overrides(db, NOTE_MODULE, path, "client_note", OVERRIDE_SHEETS)
 
 
 def export(cfg: dict, db: DB, all_insts: list[Institution], out_path) -> None:
     # overrides were synced at the start of run(); edits typed into programs_url come back in programs_url_override
     results = db.all_results(MODULE)
     overrides = db.get_overrides(MODULE)
+    notes = db.get_overrides(NOTE_MODULE)
     rows = []
     for inst in all_insts:
         d = results.get(inst.unitid)
@@ -344,7 +352,8 @@ def export(cfg: dict, db: DB, all_insts: list[Institution], out_path) -> None:
             continue
         row = {c: d.get(c, "") for c in COLUMNS}
         row.update(unitid=inst.unitid, institution=inst.name, state=inst.state,
-                   programs_url_override=overrides.get(inst.unitid, ""))
+                   programs_url_override=overrides.get(inst.unitid, ""),
+                   client_note=notes.get(inst.unitid, ""))
         if d.get("status") == "error":
             row["confidence_level"] = "Low"
         rows.append(row)

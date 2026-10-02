@@ -9,9 +9,8 @@
 # All of it can be rebuilt by running the modules again.
 output/
 
-# Private conversations with the client (not needed by the code)
-fiverr chat.txt
-meeting.txt
+# Delivery archives
+*.zip
 
 # Python's automatic cache files and virtual environments
 __pycache__/
@@ -30,3 +29,6 @@ env/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Delivered results (client data)
+results/

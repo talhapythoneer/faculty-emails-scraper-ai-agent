@@ -27,7 +27,7 @@ from .common.majors import (DEGREE_MARKER_RE, MajorMatcher, clean_program_name, 
                             program_key, slug_variants)
 from .common.pagination import collect_pages
 from .common.runner import run_parallel
-from .m2_programs import sync_m2_overrides
+from .m2_programs import NOTE_MODULE, sync_client_notes, sync_m2_overrides
 from .common.scoring import link_score, norm
 from .common.urls import (SiteScope, has_skip_extension, looks_like_url, path_words, registered_domain, site_key,
                           url_key)
@@ -60,6 +60,12 @@ TITLE_ROLE_WORDS = {"chair", "chairs", "chairperson", "chairman", "chairwoman", 
                     "msn", "dnp", "secretary", "liaison", "chief", "officer", "founding", "teaching", "clinical",
                     "tenure", "track", "term", "lab", "laboratory", "support", "services", "coordinating"}
 # Titles naming only these broad areas fit any major ("Dean, College of Arts and Sciences", "Chair, Natural Sciences").
+NO_MAJORS_NOTE_RE = re.compile(r"\bno\s+(qualifying|bachelor|undergraduate|target)", re.I)
+JUNK_NAME_RE = re.compile(r"web\s?page|website|pronoun|gender|let.s\s+talk|\bemail\b|\bcontact\b|\bprofile\b|"
+                          r"\bview\b|\bvisit\b|\bfaculty\b|\bstaff\b|\bdepartment\b|\bdegree\b|\boffice\b|\bjoin\b|"
+                          r"\bzoom\b|\btour\b|\bclick\b|\bhere\b", re.I)
+# stems that also start unrelated words: physi(cs) vs physi(cal plant), commu(nication) vs commu(nity)
+STEM_NOT = {"physi": "cal", "commu": "nit"}
 BROAD_SUBJECT_WORDS = {"natural", "science", "sciences", "stem", "mathematics", "math", "liberal", "arts", "health",
                        "medical", "professions", "professional", "pre", "life", "physical", "allied"}
 FACULTY_PAGE_COLUMNS = ["unitid", "institution", "state", "program", "faculty_page_url", "emails_found", "method"]
@@ -106,6 +112,75 @@ DIRECTORY_TEXT_RE = re.compile(r"\b(faculty\s*(&|and)?\s*staff\s+directory|facul
 def _dir_path(path: str) -> str:
     """'/directory/index.php' -> '/directory/' (an index page is its folder)."""
     return re.sub(r"/(index|default|home)\.[a-z0-9]+$", "/", path or "/")
+
+
+TABLE_DEGREE_RE = re.compile(r"(?:B\.?\s?[ASF]\.?|B\.?\s?S\.?\s?N\.?|B\.?\s?B\.?\s?A\.?|B\.?\s?S\.?\s?W\.?|B\.?\s?M\.?|"
+                             r"B\.?\s?A\.?\s?S\.?)(?:\s?(?:/|,|or|&)\s?(?:B\.?\s?[ASF]\.?|B\.?\s?S\.?\s?N\.?))*", re.I)
+CARD_LINK_TEXT = {"view program page", "program page", "view program", "learn more", "read more", "more info",
+                  "view details", "details", "explore", "explore program", "explore this program", "on campus",
+                  "online", "hybrid", "on-campus", "in person", "learn more about this program"}
+CARD_TITLE_SEL = "h1, h2, h3, h4, h5, h6, [class*='title'], [class*='name'], [class*='heading'], strong"
+
+
+def _card_title(a) -> str:
+    """Title of the card around a 'View Program Page' / 'On Campus' link: the nearest heading inside the same card."""
+    node = a
+    for _ in range(5):
+        node = node.parent
+        if node is None or node.name in ("body", "main", "html"):
+            return ""
+        if len(node.find_all("a", href=True)) > 6:
+            return ""  # left the card: this container holds several programs
+        for el in node.select(CARD_TITLE_SEL):
+            if el is a or a in el.descendants:
+                continue
+            t = collapse(el.get_text(" ", strip=True))
+            if 3 <= len(t) <= 90 and t.lower() not in CARD_LINK_TEXT:
+                return t
+    return ""
+
+
+BUTTON_PREFIX_RE = re.compile(r"^(read\s+more(\s+about)?|learn\s+more(\s+about)?|view|visit(\s+the)?|explore|discover|"
+                              r"see)\s+", re.I)
+BUTTON_SUFFIX_RE = re.compile(r"\s*(program\s+page|program\s+details|page|learn\s+more|read\s+more|details)\s*$", re.I)
+DELIVERY_SUFFIX_RE = re.compile(r"\s+[-–—]\s+(on[\s-]campus|online|hybrid|in[\s-]person)\s*$", re.I)
+CREDENTIAL_RE = re.compile(r"(,?\s+(ph\.?\s?d|ed\.?\s?d|d\.?\s?b\.?\s?a|m\.?\s?b\.?\s?a|m\.?\s?s\.?\s?n?|m\.?\s?a|m\.?\s?ed|"
+                           r"b\.?\s?[as]\.?|b\.?\s?s\.?\s?n|r\.?\s?n|d\.?\s?n\.?\s?p|m\.?\s?d|j\.?\s?d|lcsw|lpc|cpa|pe|"
+                           r"faan|cne|atc|pt|dpt)\b\.?.*$)", re.I)
+
+
+def display_program_name(name: str) -> str:
+    """'READ MORE Biology' / 'View Biology (BS) Program Page' / 'Biology, BS - On Campus' -> the program name."""
+    t = collapse(name)
+    for _ in range(2):
+        t = BUTTON_PREFIX_RE.sub("", t)
+        t = BUTTON_SUFFIX_RE.sub("", t)
+        t = DELIVERY_SUFFIX_RE.sub("", t)
+    return t.strip(" -–|,:") or collapse(name)
+
+
+def clean_degree_list(text: str, cfg: dict) -> str:
+    """Column E: clean each name, drop duplicates that appear after cleaning (case-insensitive)."""
+    sep = (cfg.get("output", {}) or {}).get("degree_separator", "; ")
+    out, seen = [], set()
+    for part in (text or "").split(sep.strip()):
+        name = display_program_name(part)
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            out.append(name)
+    return sep.join(out)
+
+
+def clean_person_name(name: str) -> str:
+    """'George Allen, D.B.A.' -> 'George Allen'; "Stephanie Keeley '07, M.B.A." -> 'Stephanie Keeley';
+    headings caught as names ('DEGREES OFFERED', 'Course Requirements') -> ''."""
+    t = collapse(name)
+    t = re.sub(r"\s+[’'‘]\d{2}\b", "", t)          # class year
+    t = CREDENTIAL_RE.sub("", t).strip(" ,;-–")
+    if not t or JUNK_NAME_RE.search(t) or re.search(r"\b(offered|requirements?|history|program|programs|degrees?|"
+                                                    r"course|courses|major|minor|logo)\b", t, re.I):
+        return ""
+    return t if is_name_like(t) else ""
 
 
 def _dept_label(programs) -> str:
@@ -243,7 +318,7 @@ class FacultyExtractor:
         pages = collect_pages(start, fetch, int(mc["max_listing_pages"]))
         if self.browser_provider is not None and not render_first:
             found = self._candidate_count(pages)
-            if found < int(mc["render_if_programs_below"]) and looks_dynamic(start.html):
+            if found < int(mc["render_if_programs_below"]):  # too few majors: the list may be drawn by JavaScript
                 rendered = self._fetch(ctx, ctx.programs_url, render=True, expand=True)
                 if rendered is not None and rendered.ok:
                     rpages = collect_pages(rendered, fetch, int(mc["max_listing_pages"]))
@@ -253,7 +328,8 @@ class FacultyExtractor:
         return pages
 
     def _candidate_count(self, pages: list[Page]) -> int:
-        return sum(1 for e in self._entries(pages) if self.matcher.classify(e.text)[0] in ("include", "ambiguous"))
+        # real major matches only: a few vague menu links ("Health Plan...") must not stop the Chrome render
+        return sum(1 for e in self._entries(pages) if self.matcher.classify(e.text)[0] == "include")
 
     def _entries(self, pages: list[Page]) -> list[Link]:
         out, seen = [], set()
@@ -270,6 +346,37 @@ class FacultyExtractor:
                 if key not in seen:
                     seen.add(key)
                     out.append(Link(name, link.url))
+            # program cards whose link only says "View Program Page" / "On Campus" / "Online": the name is the card's
+            # title (MGH, Westminster)
+            for a in soup.find_all("a", href=True):
+                text = collapse(a.get_text(" ", strip=True)).lower().strip(" ›»>")
+                if text not in CARD_LINK_TEXT:
+                    continue
+                url = urljoin(p.final_url, a["href"])
+                title = _card_title(a)
+                name = clean_program_name(title) if title else ""
+                if not name or has_skip_extension(url):
+                    continue
+                key = (norm(name), url_key(url))
+                if key not in seen:
+                    seen.add(key)
+                    out.append(Link(name, url))
+            # program tables: "Art | BA | X | Visual & Performing Arts" (degree in its own column, Worcester State)
+            for tr in soup.find_all("tr"):
+                cells = tr.find_all(["td", "th"])
+                if len(cells) < 2:
+                    continue
+                texts = [collapse(c.get_text(" ", strip=True)) for c in cells]
+                deg = next((t for t in texts[1:] if TABLE_DEGREE_RE.fullmatch(t)), "")
+                name = clean_program_name(texts[0])
+                if not deg or not name or not (3 <= len(name) <= 90) or TABLE_DEGREE_RE.fullmatch(name):
+                    continue
+                a = cells[0].find("a", href=True)
+                url = urljoin(p.final_url, a["href"]) if a else ""
+                key = (norm(name), url_key(url) if url else "")
+                if key not in seen:
+                    seen.add(key)
+                    out.append(Link(f"{name}, {deg}", url))
             # programs printed as plain text, e.g. "<li>Biology (B.S.)</li>"
             for el in soup.find_all(["li", "td", "h2", "h3", "h4", "h5"]):
                 if el.find("a"):
@@ -567,8 +674,9 @@ class FacultyExtractor:
     @staticmethod
     def _mentions(text: str, stems: set[str], slugs: list[str] = ()) -> bool:
         t = norm(text)
-        return any(re.search(rf"\b{re.escape(st)}", t) for st in stems) or any(sl and sl in text.lower()
-                                                                               for sl in slugs)
+        return (any(re.search(rf"\b{re.escape(st)}" + (f"(?!{STEM_NOT[st]})" if st in STEM_NOT else ""), t)
+                    for st in stems)
+                or any(sl and sl in text.lower() for sl in slugs))
 
     def _page_ok(self, url: str) -> bool:
         """News / blog / event pages and athletics / alumni sub-sites are never faculty pages."""
@@ -585,6 +693,8 @@ class FacultyExtractor:
         """Contact for the output: linked only to the majors their title / page fits (the Contacts sheet department)."""
         d = c.to_dict(selected=selected)
         d["programs"] = [p for p in d["programs"] if p == OFFICE_PROGRAM or self._fits_program(c, p)]
+        if d["name"] and JUNK_NAME_RE.search(d["name"]):
+            d["name"] = ""  # "Amy's Webpage", "Preferred Gender Pronouns", "Let's Talk": page text, not a name
         return d
 
     def _link_fits_dept(self, link: Link, current_url: str, slugs: list[str], stems: set[str]) -> bool:
@@ -868,7 +978,9 @@ class FacultyExtractor:
                 # fallback people must clearly belong to this department (title or department page)
                 strict = [c for c in people if prog == OFFICE_PROGRAM or self._fits_program(c, prog, strict=True)]
                 professors = [c for c in strict if c.role == "professor"]
-                others = [c for c in strict if c.role == "unknown" and c.name]  # not admin staff
+                # not admin staff; a nameless email is fine when it comes from the department's own faculty page
+                # (strict fit already requires the title or the page to name the department)
+                others = [c for c in strict if c.role == "unknown"]
                 picked += (professors or others)[: int(mc["fallback_professors_per_program"])]
             picked += offices[: int(mc["max_office_emails_per_program"])]
         ordered = sorted(picked, key=lambda c: self.roles.priority(c.role))
@@ -883,11 +995,9 @@ def _client_notes(d1: dict, d2: dict, d3: dict | None) -> str:
         return d2["m1_note"]
     if d3 is not None and d3.get("status") == "skipped":  # e.g. "no undergraduate programs" (Module 2 review)
         return d3.get("note", "")
+    # Module 1/2 confidence is internal (reviewed by hand before Module 3): it stays in the Review sheet's
+    # m1_confidence / m2_confidence columns, never in the client's NOTES column.
     notes = []
-    if d1.get("confidence_level") in ("Low", "Medium"):
-        notes.append("website needs checking")
-    if d2.get("confidence_level") in ("Low", "Medium"):
-        notes.append("programs page needs checking")
     if d3 is not None:
         if d3.get("status") == "error":
             notes.append("automatic extraction failed")
@@ -896,7 +1006,8 @@ def _client_notes(d1: dict, d2: dict, d3: dict | None) -> str:
         if d3 is not None and d3.get("status") != "error" and not d3.get("emails"):
             notes.append("no emails found (contact forms only?)")
         if "blocks automated access" in (d3.get("notes") or ""):
-            notes.append("website blocks automated access (CAPTCHA)")
+            notes.append("some department pages block automated access (CAPTCHA)" if d3.get("emails")
+                         else "website blocks automated access (CAPTCHA)")
     return "; ".join(notes)
 
 
@@ -906,6 +1017,10 @@ def export(cfg: dict, db: DB, all_insts: list[Institution], out_path, live: bool
     paths = cfg["paths"]
     m1, m2, m3 = db.all_results("m1"), db.all_results("m2"), db.all_results(MODULE)
     m1_over, m2_over = db.get_overrides("m1"), db.get_overrides("m2")
+    m2_path = resolve_path(paths["m2_output"])
+    if m2_path.exists():
+        sync_client_notes(db, m2_path)  # notes typed in 02_programs.xlsx since the last run
+    client_notes = db.get_overrides(NOTE_MODULE)
     fills, program_rows, contact_rows, review_rows, page_rows = {}, [], [], [], []
     for inst in all_insts:
         uid = inst.unitid
@@ -923,14 +1038,20 @@ def export(cfg: dict, db: DB, all_insts: list[Institution], out_path, live: bool
         base = {"unitid": uid, "institution": inst.name, "state": inst.state}
         fill = {"website": programs_url, "notes": _client_notes(d1, d2, d3)}
         if d3 is not None and d3.get("status") != "error":
-            fill["bacc"] = d3.get("bacc_degrees", "")
+            fill["bacc"] = clean_degree_list(d3.get("bacc_degrees", ""), cfg)
             fill["emails"] = d3.get("emails", "")
+        reviewed = client_notes.get(uid, "").strip()
+        if reviewed:  # a reviewer's note (02_programs.xlsx, client_note) replaces the automatic note
+            fill["notes"] = reviewed
+            if NO_MAJORS_NOTE_RE.search(reviewed):
+                fill["bacc"], fill["emails"] = "", ""  # the reviewer says there are no qualifying majors
         fills[uid] = fill
 
         if d3 is None or d3.get("status") == "skipped" or d2.get("m1_note"):
             continue  # skipped on purpose during review: nothing to list or re-check
         for p in d3.get("programs", []):
-            program_rows.append({**base, "program": p["name"], "decision": "included", "method": p.get("method", ""),
+            program_rows.append({**base, "program": display_program_name(p["name"]), "decision": "included",
+                                 "method": p.get("method", ""),
                                  "url": p.get("url", "")})
         for p in d3.get("rejected_programs", []):
             program_rows.append({**base, "program": p["name"], "decision": "excluded", "url": p.get("url", ""),
@@ -942,14 +1063,14 @@ def export(cfg: dict, db: DB, all_insts: list[Institution], out_path, live: bool
         for c in d3.get("contacts", []):
             if not c.get("programs"):
                 continue  # only seen on a campus-wide page, not linked to any major
-            rows.append({**base, "department": _dept_label(c["programs"]), "name": c.get("name", ""),
+            rows.append({**base, "department": _dept_label(c["programs"]), "name": clean_person_name(c.get("name", "")),
                          "title": c.get("title", ""), "role": c.get("role", ""), "email": c.get("email", ""),
                          "selected": bool(c.get("selected")), "programs": "; ".join(c["programs"]),
                          "source_url": c.get("source_url", ""), "method": c.get("method", "")})
         rows.sort(key=lambda r: (r["department"].lower(), not r["selected"], ROLE_ORDER.get(r["role"], 9)))
         contact_rows += rows
         issues = [n for n in fill["notes"].split("; ") if n]
-        if issues or d3.get("notes"):
+        if issues and not reviewed:  # only real problems (no majors / no emails / CAPTCHA / failed); technical notes stay in "notes"
             review_rows.append({**base, "issues": "; ".join(issues), "website_url": website,
                                 "programs_url": programs_url, "m1_confidence": d1.get("confidence_level", ""),
                                 "m2_confidence": d2.get("confidence_level", ""),

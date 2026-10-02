@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 
 paths:
-  input_file: "CTEP Freelance Project Institutions File.xlsx"
+  input_file: "input/CTEP Freelance Project Institutions File.xlsx"
   input_sheet: null                 # null = first sheet
   db_file: "output/cache.sqlite"    # page cache + results of every module (delete to start from scratch)
   log_dir: "output/logs"
@@ -227,7 +227,12 @@ m3:
   exclude_title_patterns: ['\benroll', '\badmission', '\brecruit', '\bgraduate\s+(program\s+)?(coordinator|director|admissions?|studies)',
                            '\b(study|education)\s+abroad', '\bfinancial\s+aid', '\bregistrar', '\bbursar', '\balumni',
                            '\badvancement', '\bstudent\s+accounts', '\btech(nology)?\s+support\b', '\bhelp\s*desk\b',
-                           '\bdean\s+of\s+(men|women|students|student\s+life)\b', '\bhousing\b', '\bresidence\s+life\b']
+                           '\bdean\s+of\s+(men|women|students|student\s+life)\b', '\bhousing\b', '\bresidence\s+life\b',
+                           '\bphysical\s+plant\b', '\bfacilit(y|ies)\b', '\b(it|information\s+technology)\s+(services|systems|support)\b',
+                           '\bcomputing\s+systems\b', '\bsystems\s+administrator\b', '\bdirector\s+of\s+\w+\s+at\s+[A-Z]',
+                           '\badvisory\s+board\b', '\bstudent\s+success\b', '\binstitutional\s+research\b',
+                           '\bathletics?\s+communications?\b', '\bsuccess\s+coach', '\bbusiness\s+analyst\b',
+                           '\bsports?\s+information\b', '\bevent(s)?\s+(coordinator|manager)\b']
   # links under these paths are never majors (student-life pages linked from the programs page)
   program_url_reject: ["/student-life", "/campus-life", "/athletics", "/news", "/events"]
   dept_link_threshold: 25
@@ -417,6 +422,8 @@ majors:
     - '\beducation\b'
     - '\b(aas|asn|adn|a\.a\.s|a\.s\.n|a\.d\.n)\b'   # associate degrees written as abbreviations
     - '\bgradute\b'                                  # misspelled "graduate" on some program finders
+    - '\blicensure\s+only\b'                         # teacher licensure, not a degree
+    - '^\s*[a-z]{2,4}\s?-?\d{3,4}[a-z]?\b'            # a course, not a major ("BI 101 Introduction to Biology")
     - '^\s*(school|college|department|division|institute) of\b'   # a school, not a major
   # Regex on the lowercase name: navigation / non-program links.
   noise_patterns:

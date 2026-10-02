@@ -148,14 +148,15 @@ class LLM:
     # --- Groq ------------------------------------------------------------------
     def _groq(self, purpose: str, system: str, user: str, schema: dict):
         attempts = 0
+        json_retry = None  # after an answer that failed the JSON check: (other model, more room)
         while self.enabled:
-            model = self.model
+            model = json_retry[0] if json_retry else self.model
             body = {
                 "model": model,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "response_format": {"type": "json_schema",
                                     "json_schema": {"name": purpose, "strict": True, "schema": schema}},
-                "max_completion_tokens": self.max_tokens,
+                "max_completion_tokens": json_retry[1] if json_retry else self.max_tokens,
                 "temperature": 0,
             }
             effort = self._effort(purpose)
@@ -210,6 +211,12 @@ class LLM:
                     log.warning("AI API error %s (%s): %s", r.status_code, purpose, msg)
                     return None
                 time.sleep(2 ** attempts)
+                continue
+            if r.status_code == 400 and json_retry is None and re.search(r"json_validate_failed|expected schema", r.text):
+                # the answer ran out of room or broke the format (long pages): once more, other model, more room
+                others = [m for m in self.models if m != model]
+                json_retry = (others[0] if others else model, max(self.max_tokens * 2, 16384))
+                log.info("AI answer for %s failed the JSON check - retrying once with %s", purpose, json_retry[0])
                 continue
             log.error("AI request rejected (%s): HTTP %s %s", purpose, r.status_code, msg)
             return None

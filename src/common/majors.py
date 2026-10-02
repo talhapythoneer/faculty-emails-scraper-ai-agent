@@ -18,6 +18,10 @@ MAJOR_TAIL_RE = re.compile(r"\s+major\b(?P<tail>.*)$", re.I)
 DELIVERY_RE = re.compile(r"\b(main campus|online|regional|hybrid|on campus|on-campus)\b", re.I)
 
 
+LEVEL_TAG_RE = re.compile(r"\s+(Undergraduate|Graduate|Professional)\b(?=\s*[–—|-]|\s+(?:Graduate|Undergraduate|"
+                          r"Program|Professional)\b|\s*$)")
+
+
 def clean_program_name(text: str) -> str:
     t = collapse(text)
     t = re.sub(r"\s*[»›→>]+\s*$", "", t)
@@ -27,6 +31,12 @@ def clean_program_name(text: str) -> str:
     m = MAJOR_TAIL_RE.search(t)
     if m and DELIVERY_RE.search(m.group("tail")) and not re.search(r"graduate|minor|certificat", m.group("tail"), re.I):
         t = t[: m.start()].strip(" -–|,")
+    # catalog program finders: "Accounting Major, BSM Undergraduate – New Orleans ..." -> "Accounting Major, BSM";
+    # a Graduate / Professional tag is kept as "(graduate)" so the exclusion rules still drop it
+    m = LEVEL_TAG_RE.search(t)
+    if m and ("," in t[: m.start()] or re.search(r"\b(major|minor)\b", t[: m.start()], re.I)):
+        head = t[: m.start()].strip(" -–|,")
+        t = head if m.group(1).lower() == "undergraduate" else f"{head} (graduate)"
     return "" if t.lower() in GENERIC_LINK_TEXT else t
 
 

@@ -11,3 +11,4 @@ PyYAML>=6.0
 python-dotenv>=1.0
 tqdm>=4.66
 anthropic             # install/upgrade with: pip install -U -r requirements.txt
+psutil                # closes a leftover Chrome after a killed run

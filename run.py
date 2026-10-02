@@ -1,5 +1,8 @@
 """Faculty Emails Extractor - command line.
 
+The simplest way to run it is the scripts in the project folder (run_module1.bat ... run_module3.bat on Windows,
+mac_linux/run_module*.sh on macOS / Linux). They call this file; options typed after them are passed on.
+
     python run.py m1 --state KY --limit 5      # official websites (Google: Serper API or Chrome)
     python run.py m2 --state KY                # undergraduate programs pages (Google first, crawl if unsure)
     python run.py m2 --google-only             # Google only; weak rows are crawled on the next normal run
