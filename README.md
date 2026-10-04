@@ -1,5 +1,7 @@
 # Faculty Emails Extractor
 
+Built by [Talha Pythoneer](https://www.talhapythoneer.com), web scraping and AI agents.
+
 Fills the institutions spreadsheet for the CRCEP / STRONGER mailing list:
 
 - **Column D**: the undergraduate programs page
